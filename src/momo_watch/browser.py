@@ -22,6 +22,18 @@ log = logging.getLogger(__name__)
 DEFAULT_STORAGE_STATE = Path("storage_state.json")
 MOMO_HOME = "https://m.momoshop.com.tw/"
 
+#: momo 的登入頁。實測：登出狀態下點商品頁的購物車按鈕就會被導到這裡，
+#: 所以「人在不在這個網址上」就是最直接的登入判別訊號，不必猜 cookie 名稱。
+LOGIN_URL = "https://m.momoshop.com.tw/mymomo/login.momo"
+
+#: 判斷是否還停在登入頁用的片段。
+_LOGIN_MARKER = "login.momo"
+
+
+def on_login_page(url: str) -> bool:
+    return _LOGIN_MARKER in url
+
+
 # 手機版 UA，跟 client.py 保持一致 —— 兩邊看到的頁面才會是同一個版本。
 MOBILE_USER_AGENT = (
     "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 "
@@ -112,6 +124,28 @@ class BrowserSession:
         await self.context.storage_state(path=str(self._storage_state))
         log.info("登入狀態已存到 %s", self._storage_state)
         return self._storage_state
+
+    async def is_logged_in(self, *, timeout: float = 20_000) -> bool:
+        """檢查目前 context 的登入狀態還有沒有效。
+
+        作法是打帶 preUrl 的登入網址：已登入的話 momo 會把你轉去 preUrl，
+        還沒登入就會留在登入頁。比「storage_state.json 存不存在」可靠得多 ——
+        cookie 會過期，檔案不會自己消失。
+        """
+        page = await self.context.new_page()
+        try:
+            await page.goto(
+                f"{LOGIN_URL}?preUrl={MOMO_HOME}",
+                wait_until="domcontentloaded",
+                timeout=timeout,
+            )
+            await page.wait_for_timeout(1500)
+            return not on_login_page(page.url)
+        except Exception as exc:  # noqa: BLE001 - 檢查失敗不該讓呼叫端爆掉
+            log.warning("登入狀態檢查失敗，當作未登入處理：%s", exc)
+            return False
+        finally:
+            await page.close()
 
     async def close(self) -> None:
         for closer in (self._context, self._browser):

@@ -17,6 +17,8 @@ from .store import Store
 from .text import pad
 from .watcher import Watcher
 
+log = logging.getLogger(__name__)
+
 
 def _setup_logging(level: str) -> None:
     logging.basicConfig(
@@ -172,7 +174,6 @@ async def _build_purchase_handler(config: Config, store: Store):
     await session.warm()
 
     mode = "演練" if flow.guards.dry_run else "實際下單"
-    log = logging.getLogger(__name__)
     log.warning("自動下單已啟用（%s），流程設定：%s", mode, config.flow_path)
     if flow.has_placeholders:
         log.error("%s 仍有 TODO 佔位符，下單流程會被閘門擋下", config.flow_path)
@@ -188,27 +189,91 @@ async def _build_purchase_handler(config: Config, store: Store):
 
 
 async def _login(args: argparse.Namespace, config: Config) -> int:
-    """開一個有畫面的瀏覽器讓你手動登入，然後把 cookie 存起來。
+    """開一個有畫面的瀏覽器讓你手動登入，偵測到登入完成就自動存檔。
 
-    刻意不自動化登入：momo 有簡訊 OTP 與圖形驗證，自動化既不可靠也不該做。
-    登入一次存下 storage_state，之後所有流程重複使用。
+    刻意不自動化登入本身：momo 有簡訊 OTP 與圖形驗證，自動化既不可靠也不該做。
+
+    也刻意不用「按 Enter 繼續」：那需要互動式 stdin，透過工具或腳本呼叫時
+    會直接 EOF 失敗。改成偵測你離開登入頁，並且每隔一段時間就存一次快照，
+    所以就算你直接把瀏覽器關掉，登入狀態也已經落地了。
     """
-    from .browser import MOMO_HOME, BrowserSession
+    from .browser import LOGIN_URL, BrowserSession, on_login_page
 
     session = BrowserSession(storage_state=config.storage_state, headless=False)
     await session.start()
+
     try:
         page = await session.new_page()
-        await page.goto(MOMO_HOME, wait_until="domcontentloaded")
-        print("瀏覽器已開啟。請在視窗中完成登入（含簡訊 OTP）。")
-        print("登入完成後回到這裡按 Enter 儲存登入狀態……")
-        await asyncio.to_thread(input)
-        path = await session.save_login_state()
-        print(f"登入狀態已存到 {path}")
-        print("⚠️ 這個檔案等同你的登入憑證，不要提交進 git（.gitignore 已排除）。")
+        await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60_000)
+
+        print("瀏覽器已開啟，請在視窗中完成登入（含簡訊 OTP）。")
+        print(f"偵測到登入完成會自動存到 {config.storage_state}，不需要回來按任何鍵。")
+        print(f"（最多等 {args.timeout // 60} 分鐘；隨時可以直接關掉瀏覽器，之前的進度已存下）\n")
+
+        deadline = asyncio.get_running_loop().time() + args.timeout
+        saved = False
+
+        while asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(2)
+
+            if page.is_closed():
+                print("瀏覽器已關閉。")
+                break
+
+            # 先存快照再判斷 —— 使用者隨時可能關視窗，存過就不怕白做工。
+            try:
+                await session.save_login_state()
+                saved = True
+            except Exception as exc:  # noqa: BLE001 - 視窗關閉時會失敗，屬正常
+                log.debug("存檔失敗（多半是視窗剛關閉）：%s", exc)
+                break
+
+            if not on_login_page(page.url):
+                print(f"偵測到已離開登入頁 → {page.url[:70]}")
+                await asyncio.sleep(2)  # 讓 momo 把 cookie 都設完
+                await session.save_login_state()
+                print(f"\n✅ 登入狀態已存到 {config.storage_state}")
+                print("⚠️ 這個檔案等同你的登入憑證，別提交、別放共用目錄。")
+                print("\n下一步：python tools/probe_selectors.py --url <購物車網址>")
+                return 0
+        else:
+            print(f"\n等待逾時（{args.timeout} 秒）。", file=sys.stderr)
+
+        if saved:
+            print(f"已存下最後一次快照到 {config.storage_state}。")
+            print("用 `momo-watch whoami` 確認登入是否有效。")
+            return 0
+
+        print("沒有存到任何登入狀態。", file=sys.stderr)
+        return 1
+    finally:
+        with contextlib.suppress(Exception):
+            await session.close()
+
+
+async def _whoami(args: argparse.Namespace, config: Config) -> int:
+    """確認已存下的登入狀態還有沒有效。cookie 會過期，檔案不會自己消失。"""
+    from .browser import BrowserSession
+
+    session = BrowserSession(storage_state=config.storage_state, headless=config.headless)
+    if not session.has_login_state:
+        print(
+            f"找不到 {config.storage_state}，尚未登入。先跑 `momo-watch login`。", file=sys.stderr
+        )
+        return 1
+
+    await session.start()
+    try:
+        if await session.is_logged_in():
+            print(f"✅ 登入有效（{config.storage_state}）")
+            return 0
+        print(
+            f"❌ 登入已失效或過期（{config.storage_state}）。重跑 `momo-watch login`。",
+            file=sys.stderr,
+        )
+        return 1
     finally:
         await session.close()
-    return 0
 
 
 async def _execute_flow(config: Config, code: str, *, dry_run: bool | None) -> int:
@@ -241,9 +306,15 @@ async def _execute_flow(config: Config, code: str, *, dry_run: bool | None) -> i
     session = BrowserSession(storage_state=config.storage_state, headless=config.headless)
     await session.start()
     try:
-        if not session.has_login_state:
-            print("警告：沒有登入狀態，購物車與結帳步驟預期會失敗。", file=sys.stderr)
-            print("      先跑 `momo-watch login`。", file=sys.stderr)
+        # 只有真的要動購物車時才值得花一次往返去驗證登入；演練停在商品頁，
+        # 那段本來就不需要登入。
+        if not effective_dry_run:
+            if not session.has_login_state:
+                print("警告：沒有登入狀態，購物車與結帳步驟預期會失敗。", file=sys.stderr)
+                print("      先跑 `momo-watch login`。", file=sys.stderr)
+            elif not await session.is_logged_in():
+                print("警告：登入狀態已失效或過期，購物車與結帳步驟預期會失敗。", file=sys.stderr)
+                print("      重跑 `momo-watch login`。", file=sys.stderr)
         await session.warm()
         page = await session.new_page()
         result = await FlowRunner(flow, dry_run=effective_dry_run).run(page, {"code": code})
@@ -358,7 +429,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # --- Phase 2 ---
-    sub.add_parser("login", help="開瀏覽器手動登入一次，儲存登入狀態")
+    p_login = sub.add_parser("login", help="開瀏覽器手動登入一次，儲存登入狀態")
+    p_login.add_argument("--timeout", type=int, default=600, help="最多等幾秒完成登入（預設 600）")
+
+    sub.add_parser("whoami", help="確認已存下的登入狀態還有沒有效")
 
     def add_mode_flags(p: argparse.ArgumentParser) -> None:
         mode = p.add_mutually_exclusive_group()
@@ -402,6 +476,8 @@ def _dispatch(args: argparse.Namespace, config: Config) -> int:
         return asyncio.run(_run(args, config))
     if args.command == "login":
         return asyncio.run(_login(args, config))
+    if args.command == "whoami":
+        return asyncio.run(_whoami(args, config))
     if args.command == "buy":
         return asyncio.run(_buy(args, config))
     if args.command == "arm":
