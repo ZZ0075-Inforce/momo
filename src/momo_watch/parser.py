@@ -37,6 +37,10 @@ _OUT_OF_STOCK_TOKENS = {
 
 _PRICE_CLEAN_RE = re.compile(r"[^\d.]")
 
+#: momo 在 <title> 與 og:title 後面接的 SEO 後綴，例如
+#: 「 - momo購物網 - 好評推薦 -2026年8月」。
+_SEO_SUFFIX_RE = re.compile(r"\s*-\s*momo購物網.*$", re.S)
+
 
 def _meta(tree: HTMLParser, prop: str) -> str | None:
     """讀 <meta> 的 content，property= 與 name= 兩種寫法都試。"""
@@ -79,17 +83,42 @@ def parse_availability(raw: str | None) -> Availability:
     return Availability.UNKNOWN
 
 
+def clean_name(raw: str | None) -> str | None:
+    """去掉 momo 加在商品名後面的 SEO 後綴。
+
+    實際抓到的是：
+        「【MAY FLOWER 五月花】新柔韌抽取式衛生紙 - momo購物網 - 好評推薦 -2026年8月」
+    後綴含年月，每個月都會變 —— 留著不只是通知裡的雜訊，日後若要比對名稱變化
+    也會每月誤判一次。
+    """
+    if not raw:
+        return None
+    return _SEO_SUFFIX_RE.sub("", raw).strip() or None
+
+
 def parse_product(code: str, html: str, *, fetched_at: datetime | None = None) -> Snapshot:
-    """把商品頁 HTML 解析成 Snapshot。解析不到的欄位留 None / UNKNOWN。"""
+    """把商品頁 HTML 解析成 Snapshot。解析不到的欄位留 None / UNKNOWN。
+
+    注意 momo 對不存在／已下架的商品編號是回 **HTTP 200** 加一個通用殼頁，
+    不是 404。那種頁面沒有任何 og 標籤，三個欄位都會是空的 ——
+    見 Snapshot.looks_missing。
+    """
     tree = HTMLParser(html)
-    name = _meta(tree, "og:title")
-    if name is None and tree.css_first("title") is not None:
-        name = (tree.css_first("title").text() or "").strip() or None
+    name = clean_name(_meta(tree, "og:title"))
+    price = parse_price(_meta(tree, "product:price:amount"))
+    availability = parse_availability(_meta(tree, "product:availability"))
+
+    # 只有在確實是商品頁時才退回 <title>。否則會把 momo 的殼頁標題
+    # （「momo購物網 -- Mobile管理訊息」）當成商品名稱回報出去，比留空更糟。
+    if name is None and (price is not None or availability is not Availability.UNKNOWN):
+        title = tree.css_first("title")
+        if title is not None:
+            name = clean_name(title.text())
 
     return Snapshot(
         code=code,
         name=name,
-        price=parse_price(_meta(tree, "product:price:amount")),
-        availability=parse_availability(_meta(tree, "product:availability")),
+        price=price,
+        availability=availability,
         fetched_at=fetched_at or datetime.now(UTC),
     )

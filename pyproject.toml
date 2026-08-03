@@ -6,6 +6,8 @@ requires-python = ">=3.11"
 dependencies = [
     "httpx>=0.27",
     "selectolax>=0.3.21",
+    # Windows 沒有系統 IANA 時區資料庫，zoneinfo 查 "Asia/Taipei" 會直接失敗。
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

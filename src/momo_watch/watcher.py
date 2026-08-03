@@ -107,6 +107,15 @@ class Watcher:
             log.warning("%s", exc)
             return []
 
+        if fetched.looks_missing:
+            # 抓得到頁面但整頁沒有商品資訊。這種商品永遠不會觸發任何事件，
+            # 靜靜留在清單裡只會讓人以為還在監控，所以每一輪都出聲。
+            log.warning(
+                "[%s] 查無商品資訊，可能編號錯誤或已下架：%s",
+                watch.code,
+                fetched.desktop_url,
+            )
+
         previous = self._store.get_state(watch.code)
         current = merge_state(previous, fetched)
         events = diff(watch, previous, current)

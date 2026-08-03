@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from momo_watch.models import Availability, normalize_code
-from momo_watch.parser import parse_availability, parse_price, parse_product
+from momo_watch.parser import clean_name, parse_availability, parse_price, parse_product
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -18,6 +18,10 @@ class TestNormalizeCode:
         [
             "6453015",
             "  6453015  ",
+            # momo 目前網址列顯示的形式（舊網址都會 301 轉到這裡）
+            "https://www.momoshop.com.tw/product/6453015",
+            "https://www.momoshop.com.tw/product/6453015?parentId=0",
+            # 舊格式仍然要吃 —— 書籤與別人分享的連結還是這個
             "https://www.momoshop.com.tw/goods/GoodsDetail.jsp?i_code=6453015",
             "https://m.momoshop.com.tw/goods.momo?i_code=6453015",
             "https://www.momoshop.com.tw/goods/GoodsDetail.jsp?i_code=6453015&mdiv=1099700000",
@@ -84,9 +88,69 @@ class TestParseProduct:
         snap = parse_product("6453015", load("no_meta.html"))
         assert snap.price is None
         assert snap.availability is Availability.UNKNOWN
-        assert snap.name == "momo購物網"  # 退回 <title>
 
     def test_empty_html(self):
         snap = parse_product("6453015", "")
         assert snap.availability is Availability.UNKNOWN
         assert snap.price is None
+
+
+class TestCleanName:
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            (
+                "【MAY FLOWER 五月花】新柔韌抽取式衛生紙 - momo購物網 - 好評推薦 -2026年8月",
+                "【MAY FLOWER 五月花】新柔韌抽取式衛生紙",
+            ),
+            (
+                "【Kleenex 舒潔】絲絨舒膚抽取衛生紙 - momo購物網",
+                "【Kleenex 舒潔】絲絨舒膚抽取衛生紙",
+            ),
+            ("沒有後綴的名稱", "沒有後綴的名稱"),
+            (None, None),
+            ("", None),
+        ],
+    )
+    def test_strips_seo_suffix(self, raw, expected):
+        """後綴含年月，每月都會變 —— 留著會變成通知裡的雜訊。"""
+        assert clean_name(raw) == expected
+
+
+class TestMissingProduct:
+    """momo 對不存在／已下架的商品編號回 HTTP 200 加通用殼頁，不是 404。"""
+
+    def test_shell_page_is_flagged_as_missing(self):
+        snap = parse_product("6453015", load("missing_product.html"))
+        assert snap.looks_missing
+
+    def test_shell_page_title_is_not_used_as_product_name(self):
+        """殼頁的 <title> 是「momo購物網 -- Mobile管理訊息」。
+
+        拿它當商品名稱回報比留空更糟 —— 使用者會以為抓到了商品。
+        """
+        snap = parse_product("6453015", load("missing_product.html"))
+        assert snap.name is None
+
+    def test_real_product_is_not_flagged_as_missing(self):
+        assert not parse_product("6453015", load("in_stock.html")).looks_missing
+
+    def test_out_of_stock_product_is_not_missing(self):
+        """售完跟不存在是兩回事，不能混為一談。"""
+        snap = parse_product("6453015", load("out_of_stock.html"))
+        assert not snap.looks_missing
+        assert snap.availability is Availability.OUT_OF_STOCK
+
+    def test_title_fallback_still_works_on_real_product_pages(self):
+        """有商品資訊但缺 og:title 時，仍然可以退回 <title>。"""
+        html = """<html><head><title>某商品 - momo購物網 - 好評推薦 -2026年8月</title>
+        <meta property="product:price:amount" content="1,299">
+        <meta property="product:availability" content="in stock"></head></html>"""
+        snap = parse_product("123", html)
+        assert snap.name == "某商品"
+        assert not snap.looks_missing
+
+    def test_desktop_url_uses_current_momo_form(self):
+        """momo 現在把舊網址都轉到 /product/{code}。"""
+        snap = parse_product("3252331", load("in_stock.html"))
+        assert snap.desktop_url == "https://www.momoshop.com.tw/product/3252331"

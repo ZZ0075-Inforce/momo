@@ -11,7 +11,7 @@ import sys
 
 from .client import FetchError, MomoClient
 from .config import Config
-from .models import normalize_code
+from .models import Availability, normalize_code
 from .notifier import build_handlers
 from .store import Store
 from .text import pad
@@ -38,12 +38,8 @@ def _make_client(config: Config) -> MomoClient:
 
 
 def cmd_add(args: argparse.Namespace, config: Config) -> int:
+    code = normalize_code(args.target)  # 網址解析失敗由 main() 統一處理
     store = Store(config.db_path)
-    try:
-        code = normalize_code(args.target)
-    except ValueError as exc:
-        print(f"錯誤：{exc}", file=sys.stderr)
-        return 1
     store.add_watch(code, label=args.label, price_threshold=args.threshold)
     extra = f"，目標價 NT${args.threshold:,}" if args.threshold else ""
     print(f"已加入監控：{code}{extra}")
@@ -108,13 +104,21 @@ async def _check(args: argparse.Namespace, config: Config) -> int:
             print(f"抓取失敗：{exc}", file=sys.stderr)
             return 1
 
+    if snapshot.looks_missing:
+        # momo 對不存在的編號回 HTTP 200 加通用殼頁，所以這裡不是抓取失敗。
+        print(f"查無此商品：{code}", file=sys.stderr)
+        print("      momo 對不存在／已下架的編號會回一個沒有商品資訊的頁面。", file=sys.stderr)
+        print(f"      先用瀏覽器開 {snapshot.desktop_url} 確認編號是否正確。", file=sys.stderr)
+        return 3
+
     print(f"商品編號 : {snapshot.code}")
     print(f"名稱     : {snapshot.name or '(解析不到)'}")
     print(f"價格     : {f'NT${snapshot.price:,}' if snapshot.price is not None else '(解析不到)'}")
     print(f"庫存     : {snapshot.availability.value}")
     print(f"連結     : {snapshot.desktop_url}")
-    if snapshot.availability.value == "unknown":
-        print("\n注意：庫存判定為 unknown，可能是 momo 改版或被擋。", file=sys.stderr)
+    if snapshot.availability is Availability.UNKNOWN:
+        # 頁面有商品資訊卻讀不出庫存 —— 這才是 momo 改版的訊號。
+        print("\n注意：抓到商品但庫存判定為 unknown，可能是 momo 改版。", file=sys.stderr)
         print("      把頁面存成 fixture 丟進 tests/ 重現，再修 parser.py。", file=sys.stderr)
         return 2
     return 0
@@ -372,11 +376,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    config = Config.from_env()
-    _setup_logging(config.log_level)
-
+def _dispatch(args: argparse.Namespace, config: Config) -> int:
     if args.command == "add":
         return cmd_add(args, config)
     if args.command == "rm":
@@ -398,6 +398,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "arm":
         return asyncio.run(_arm(args, config))
     return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    config = Config.from_env()
+    _setup_logging(config.log_level)
+
+    try:
+        return _dispatch(args, config)
+    except ValueError as exc:
+        # 多半是 normalize_code 收到看不懂的網址。使用者貼錯連結是常態，
+        # 不該丟一整串 traceback 出去。
+        print(f"錯誤：{exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\n已取消。", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":

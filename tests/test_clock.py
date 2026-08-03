@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import struct
 from datetime import UTC, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -86,7 +87,7 @@ class TestSecondsUntil:
             seconds_until(self.target, now=naive)
 
     def test_taipei_timezone_is_handled(self):
-        taipei = datetime(2026, 8, 11, 8, 0, 0, tzinfo=UTC).astimezone(
-            __import__("zoneinfo").ZoneInfo("Asia/Taipei")
-        )
+        """跨時區比較要正確。Windows 沒有系統時區資料庫，靠 tzdata 這個相依套件。"""
+        taipei = datetime(2026, 8, 11, 8, 0, 0, tzinfo=UTC).astimezone(ZoneInfo("Asia/Taipei"))
+        assert taipei.hour == 16  # UTC+8
         assert seconds_until(taipei, now=datetime(2026, 8, 11, 7, 59, 0, tzinfo=UTC)) == 60.0
