@@ -7,13 +7,19 @@
 # 都只是猜測。只要還有 TODO，PurchaseHandler 就會拒絕執行（見 check_guards）。
 #
 # 怎麼抓 selector：
-#   1. 用你平常的瀏覽器登入 momo，走一次完整的購買流程
-#   2. 在每個要點的按鈕上按右鍵 →「檢查」
-#   3. 在 Elements 面板對該節點按右鍵 → Copy → Copy selector
-#   4. 優先用 id（#addCartBtn）；用不到 id 時改用穩定的屬性
-#      （[data-action="addCart"]）。class 名稱最容易在改版時失效。
-#   5. 填完跑 `momo-watch buy <商品編號> --dry-run` 驗證，演練會檢查每個
-#      selector 找不找得到，但不會真的點下去。
+#   1. 跑 `python tools/probe_selectors.py <商品編號>` 列出候選元素
+#   2. 需要登入才看得到的頁面（購物車、結帳），先 `momo-watch login`，
+#      再用瀏覽器右鍵→檢查，自己挑 selector
+#   3. 填完跑 `momo-watch buy <商品編號> --dry-run` 驗證
+#
+# ⚠️ momo 的前端**沒有穩定的 id 或 data-* 屬性**。
+# 實測（2026-08）商品頁的按鈕長這樣：
+#     <button class="h-[40px] flex-1 rounded bg-[#1169BB] ...">加入購物車</button>
+# 全是 Tailwind 工具類別，編碼了顏色和尺寸，改個設計就失效。
+# 所以這裡**用文字選擇器**，那是目前最穩的錨點：
+#     button:text-is("加入購物車") >> visible=true
+# 加 `visible=true` 是必要的：頁面上同時有兩個「加入購物車」，
+# 一個是主按鈕，一個藏在規格選擇的底部彈層裡，不過濾會選到錯的。
 
 
 [guards]
@@ -61,27 +67,42 @@ url = "https://m.momoshop.com.tw/goods.momo?i_code={code}"
 timeout_ms = 15000
 
 [[steps]]
-name = "關閉可能的彈窗"
-action = "click"
-selector = "TODO_彈窗關閉鈕"
-optional = true          # 沒跳彈窗時直接跳過
-timeout_ms = 1500
-
-[[steps]]
 name = "確認有加入購物車按鈕"
 action = "expect"
-selector = "TODO_加入購物車按鈕"
+selector = 'button:text-is("加入購物車") >> visible=true'
+timeout_ms = 10000
 
+# 到這裡為止是「演練模式」會驗證的範圍。下面的步驟要先有東西在購物車裡
+# 才看得到，所以 selector 得等你跑過一次 --live 之後才填得出來。
 [[steps]]
 name = "加入購物車"
 action = "click"
-selector = "TODO_加入購物車按鈕"
+selector = 'button:text-is("加入購物車") >> visible=true'
 mutating = true
+
+# ⚠️ 有規格（顏色/尺寸/組合）的商品，上一步會先跳出底部規格選擇彈層，
+# 要在彈層裡選規格再按一次確認。衛生紙這類無規格商品不會跳。
+# 你的目標商品若有規格，把下面兩步的 TODO 填掉；沒有的話設 optional = true
+# 就會自動跳過。
+[[steps]]
+name = "規格選擇：選規格"
+action = "click"
+selector = "TODO_規格按鈕（無規格商品可整段刪掉）"
+optional = true
+timeout_ms = 2000
+
+[[steps]]
+name = "規格選擇：確認加入"
+action = "click"
+selector = "TODO_彈層裡的加入購物車鈕"
+optional = true
+mutating = true
+timeout_ms = 2000
 
 [[steps]]
 name = "等待加入成功"
 action = "wait_for"
-selector = "TODO_加入成功的提示或購物車數量"
+selector = "TODO_加入成功的提示或購物車數量徽章"
 
 [[steps]]
 name = "前往購物車"

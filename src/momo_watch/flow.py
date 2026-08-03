@@ -91,6 +91,11 @@ class Guards:
     max_attempts: int = 1
 
 
+def placeholder_steps(steps: list[Step]) -> list[str]:
+    """回傳還留著 TODO 佔位符的步驟名稱。"""
+    return [s.name for s in steps if "TODO" in (s.selector or "") or "TODO" in (s.url or "")]
+
+
 @dataclass(frozen=True, slots=True)
 class Flow:
     steps: list[Step]
@@ -98,8 +103,23 @@ class Flow:
 
     @property
     def has_placeholders(self) -> bool:
-        """設定檔還留著 TODO 佔位符 —— 代表使用者還沒填真正的 selector。"""
-        return any("TODO" in (s.selector or "") or "TODO" in (s.url or "") for s in self.steps)
+        """設定檔還留著 TODO 佔位符 —— 代表使用者還沒填完真正的 selector。"""
+        return bool(placeholder_steps(self.steps))
+
+    @property
+    def dry_run_steps(self) -> list[Step]:
+        """演練模式實際會碰到的步驟：到第一個 mutating 為止（含）。
+
+        用途是讓 selector 可以分批填：先填好商品頁的部分就能 dry-run 驗證，
+        不必等購物車與結帳頁的 selector 也湊齊。那些後面的步驟本來就要先
+        把東西放進購物車才看得到，硬要求一次填完等於逼人瞎猜。
+        """
+        out: list[Step] = []
+        for step in self.steps:
+            out.append(step)
+            if step.mutating:
+                break
+        return out
 
 
 def _parse_step(raw: dict[str, Any], index: int) -> Step:

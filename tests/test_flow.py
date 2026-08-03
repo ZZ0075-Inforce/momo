@@ -2,7 +2,16 @@
 
 import pytest
 
-from momo_watch.flow import Action, Flow, FlowError, Guards, Step, load_flow, parse_flow
+from momo_watch.flow import (
+    Action,
+    Flow,
+    FlowError,
+    Guards,
+    Step,
+    load_flow,
+    parse_flow,
+    placeholder_steps,
+)
 
 
 def make(**overrides):
@@ -145,13 +154,80 @@ class TestPlaceholderDetection:
         flow = parse_flow({"steps": [{"name": "x", "action": "click", "selector": "#add-cart"}]})
         assert flow.has_placeholders is False
 
-    def test_shipped_example_is_all_placeholders(self):
-        """flow.example.toml 必須留著 TODO —— 它是範本不是可直接用的設定。
+    def test_shipped_example_is_never_directly_runnable(self):
+        """flow.example.toml 的購物車與結帳步驟必須留著 TODO。
 
-        萬一哪天有人把真的 selector 填進範例檔並提交，這個測試會擋下來。
+        商品頁的 selector 是實測過的真值（見檔案裡的說明），但購物車之後的
+        步驟要先有東西在購物車才看得到，只能由使用者自己填。萬一哪天有人把
+        整份填滿並提交，這個測試會擋下來。
         """
         flow = load_flow("flow.example.toml")
         assert flow.has_placeholders is True
+
+
+class TestDryRunSteps:
+    """演練只跑到第一個 mutating 步驟，所以 selector 可以分批填。"""
+
+    def make(self, *specs):
+        return parse_flow(
+            {
+                "steps": [
+                    {"name": n, "action": "click", "selector": s, "mutating": m}
+                    for n, s, m in specs
+                ]
+            }
+        )
+
+    def test_stops_after_first_mutating(self):
+        flow = self.make(
+            ("看", "#a", False),
+            ("點", "#b", True),
+            ("之後", "#c", False),
+            ("再點", "#d", True),
+        )
+        assert [s.name for s in flow.dry_run_steps] == ["看", "點"]
+
+    def test_includes_the_mutating_step_itself(self):
+        """演練要驗證那個 mutating 步驟的 selector 找不找得到，所以必須含它。"""
+        flow = self.make(("點", "#b", True))
+        assert [s.name for s in flow.dry_run_steps] == ["點"]
+
+    def test_no_mutating_step_means_all_steps(self):
+        flow = self.make(("a", "#a", False), ("b", "#b", False))
+        assert len(flow.dry_run_steps) == 2
+
+    def test_placeholders_after_first_mutating_do_not_block_dry_run(self):
+        """這是重點：購物車與結帳還沒填，也要能先驗證商品頁。"""
+        flow = self.make(
+            ("確認按鈕", "#add", False),
+            ("加入購物車", "#add", True),
+            ("結帳", "TODO_結帳鈕", False),
+        )
+        assert flow.has_placeholders is True
+        assert placeholder_steps(flow.dry_run_steps) == []
+
+    def test_placeholder_before_first_mutating_still_blocks(self):
+        flow = self.make(("確認按鈕", "TODO_按鈕", False), ("加入購物車", "#add", True))
+        assert placeholder_steps(flow.dry_run_steps) == ["確認按鈕"]
+
+
+class TestPlaceholderSteps:
+    def test_reports_names_not_just_a_boolean(self):
+        """使用者要知道是哪幾步沒填，不是只知道「有東西沒填」。"""
+        flow = parse_flow(
+            {
+                "steps": [
+                    {"name": "好的", "action": "click", "selector": "#ok"},
+                    {"name": "壞的一", "action": "click", "selector": "TODO_x"},
+                    {"name": "壞的二", "action": "goto", "url": "TODO_y"},
+                ]
+            }
+        )
+        assert placeholder_steps(flow.steps) == ["壞的一", "壞的二"]
+
+    def test_empty_when_all_filled(self):
+        flow = parse_flow({"steps": [{"name": "好", "action": "click", "selector": "#ok"}]})
+        assert placeholder_steps(flow.steps) == []
 
 
 class TestLoadFlow:

@@ -213,7 +213,7 @@ async def _login(args: argparse.Namespace, config: Config) -> int:
 
 async def _execute_flow(config: Config, code: str, *, dry_run: bool | None) -> int:
     from .browser import BrowserSession
-    from .flow import FlowError, load_flow
+    from .flow import FlowError, load_flow, placeholder_steps
     from .runner import FlowRunner
 
     try:
@@ -223,11 +223,20 @@ async def _execute_flow(config: Config, code: str, *, dry_run: bool | None) -> i
         return 1
 
     effective_dry_run = flow.guards.dry_run if dry_run is None else dry_run
-    if flow.has_placeholders:
-        print(
-            f"錯誤：{config.flow_path} 還有 TODO 佔位符，請先填入真正的 selector。", file=sys.stderr
-        )
+
+    # 演練只跑到第一個 mutating 步驟，所以只檢查那段的 selector 有沒有填。
+    # 這樣才能先填商品頁、驗證通過，再回頭填購物車與結帳 —— 後面那些步驟
+    # 本來就要先把東西放進購物車才看得到。
+    relevant = flow.dry_run_steps if effective_dry_run else flow.steps
+    if pending := placeholder_steps(relevant):
+        print(f"錯誤：{config.flow_path} 這些步驟還是 TODO 佔位符：", file=sys.stderr)
+        for name in pending:
+            print(f"        - {name}", file=sys.stderr)
+        print("      填好真正的 selector 再跑。", file=sys.stderr)
         return 1
+
+    if effective_dry_run and (later := placeholder_steps(flow.steps)):
+        print(f"（演練不會碰到這 {len(later)} 個尚未填寫的步驟：{'、'.join(later)}）")
 
     session = BrowserSession(storage_state=config.storage_state, headless=config.headless)
     await session.start()
