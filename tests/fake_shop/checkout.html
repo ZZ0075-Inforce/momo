@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8">
+  <title>假商店 - 付款</title>
+</head>
+<body>
+  <h1>付款</h1>
+  <form id="payment-form">
+    <label>信用卡末三碼 <input id="cvv" name="cvv"></label>
+    <!-- 流程永遠不該點到這顆按鈕；測試會斷言它沒被按過 -->
+    <button id="submit-payment" type="button">確認付款</button>
+  </form>
+  <div id="payment-submitted" hidden>付款已送出</div>
+
+  <script>
+    document.getElementById("submit-payment").addEventListener("click", () => {
+      document.getElementById("payment-submitted").hidden = false;
+    });
+  </script>
+</body>
+</html>

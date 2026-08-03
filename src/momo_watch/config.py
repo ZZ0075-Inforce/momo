@@ -24,6 +24,13 @@ def _env_int(key: str, default: int) -> int:
     return int(_env_float(key, float(default)))
 
 
+def _env_bool(key: str, default: bool) -> bool:
+    raw = os.environ.get(key, "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
 def _load_dotenv(path: Path) -> None:
     """極簡 .env 載入器，已存在的環境變數優先。"""
     if not path.is_file():
@@ -47,6 +54,12 @@ class Config:
     telegram_token: str | None
     telegram_chat_id: str | None
     log_level: str
+    # --- Phase 2（下單流程）。有預設值，只做監控時不用管。---
+    flow_path: Path = Path("flow.toml")
+    storage_state: Path = Path("storage_state.json")
+    screenshot_dir: Path = Path("screenshots")
+    headless: bool = True
+    ntp_server: str = "time.stdtime.gov.tw"
 
     @property
     def telegram_enabled(self) -> bool:
@@ -72,4 +85,9 @@ class Config:
             telegram_token=os.environ.get("MOMO_TELEGRAM_TOKEN") or None,
             telegram_chat_id=os.environ.get("MOMO_TELEGRAM_CHAT_ID") or None,
             log_level=os.environ.get("MOMO_LOG_LEVEL", "INFO").upper(),
+            flow_path=Path(os.environ.get("MOMO_FLOW_PATH", "flow.toml")),
+            storage_state=Path(os.environ.get("MOMO_STORAGE_STATE", "storage_state.json")),
+            screenshot_dir=Path(os.environ.get("MOMO_SCREENSHOT_DIR", "screenshots")),
+            headless=_env_bool("MOMO_HEADLESS", True),
+            ntp_server=os.environ.get("MOMO_NTP_SERVER", "time.stdtime.gov.tw"),
         )

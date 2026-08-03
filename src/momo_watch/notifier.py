@@ -1,7 +1,11 @@
 """事件輸出端。
 
-刻意做成 Protocol：Phase 2 要加「自動加入購物車」時，寫一個新的 handler
-掛進 Watcher 就好，不用動 Watcher 本身。
+分成兩層：
+  Sender  —— 送一段純文字（Phase 2 的下單結果回報也走這裡）
+  Handler —— 處理 Event（Phase 2 的自動加入購物車就是一個 Handler）
+
+Handler 做成 Protocol 是為了讓 Phase 2 的下單邏輯掛進 Watcher 而不用改
+Watcher 本身。
 """
 
 from __future__ import annotations
@@ -24,6 +28,61 @@ _ICONS = {
     EventKind.SOLD_OUT: "⛔",
     EventKind.FIRST_SEEN: "👀",
 }
+
+
+# --- 純文字輸出 ---------------------------------------------------------
+
+
+class Sender(Protocol):
+    """送出一段純文字通知。"""
+
+    async def send(self, text: str) -> None: ...
+
+
+class ConsoleSender:
+    async def send(self, text: str) -> None:
+        log.warning("%s", text.replace("\n", " | "))
+
+
+class TelegramSender:
+    def __init__(self, token: str, chat_id: str) -> None:
+        self._url = f"https://api.telegram.org/bot{token}/sendMessage"
+        self._chat_id = chat_id
+
+    async def send(self, text: str) -> None:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    self._url,
+                    json={
+                        "chat_id": self._chat_id,
+                        "text": html.escape(text),
+                        "parse_mode": "HTML",
+                        "disable_web_page_preview": False,
+                    },
+                )
+            if resp.status_code >= 400:
+                log.error("Telegram 推播失敗 HTTP %s: %s", resp.status_code, resp.text[:200])
+        except httpx.HTTPError as exc:
+            # 通知掛掉不該讓監控迴圈跟著死。
+            log.error("Telegram 推播錯誤: %s", exc)
+
+
+class FanoutSender:
+    """同時送到多個目的地；其中一個失敗不影響其他。"""
+
+    def __init__(self, senders: list[Sender]) -> None:
+        self._senders = senders
+
+    async def send(self, text: str) -> None:
+        for sender in self._senders:
+            try:
+                await sender.send(text)
+            except Exception:  # noqa: BLE001
+                log.exception("sender %s 送出失敗", type(sender).__name__)
+
+
+# --- 事件處理 -----------------------------------------------------------
 
 
 class Handler(Protocol):
@@ -54,38 +113,29 @@ class TelegramHandler:
     把通知靜音，那等於整個專案失效。
     """
 
-    def __init__(self, token: str, chat_id: str, *, urgent_only: bool = True) -> None:
-        self._url = f"https://api.telegram.org/bot{token}/sendMessage"
-        self._chat_id = chat_id
+    def __init__(self, sender: Sender, *, urgent_only: bool = True) -> None:
+        self._sender = sender
         self._urgent_only = urgent_only
 
     async def handle(self, event: Event) -> None:
         if self._urgent_only and not event.is_urgent:
             return
-
-        text = html.escape(format_event(event))
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.post(
-                    self._url,
-                    json={
-                        "chat_id": self._chat_id,
-                        "text": text,
-                        "parse_mode": "HTML",
-                        "disable_web_page_preview": False,
-                    },
-                )
-            if resp.status_code >= 400:
-                log.error("Telegram 推播失敗 HTTP %s: %s", resp.status_code, resp.text[:200])
-        except httpx.HTTPError as exc:
-            # 通知掛掉不該讓監控迴圈跟著死。
-            log.error("Telegram 推播錯誤: %s", exc)
+        await self._sender.send(format_event(event))
 
 
-def build_handlers(config) -> list[Handler]:  # noqa: ANN001 - 避免與 config 循環匯入
+def build_sender(config) -> Sender:  # noqa: ANN001 - 避免與 config 循環匯入
+    senders: list[Sender] = [ConsoleSender()]
+    if config.telegram_enabled:
+        senders.append(TelegramSender(config.telegram_token, config.telegram_chat_id))
+    return FanoutSender(senders)
+
+
+def build_handlers(config) -> list[Handler]:  # noqa: ANN001
     handlers: list[Handler] = [ConsoleHandler()]
     if config.telegram_enabled:
-        handlers.append(TelegramHandler(config.telegram_token, config.telegram_chat_id))
+        handlers.append(
+            TelegramHandler(TelegramSender(config.telegram_token, config.telegram_chat_id))
+        )
     else:
         log.info("未設定 MOMO_TELEGRAM_TOKEN / CHAT_ID，只輸出到 console")
     return handlers

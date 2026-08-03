@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8">
+  <title>假商店 - 商品頁</title>
+  <meta property="og:title" content="測試商品">
+  <meta property="product:price:amount" content="1,299">
+  <meta property="product:availability" content="in stock">
+</head>
+<body>
+  <h1>測試商品</h1>
+
+  <!-- 只有帶 ?popup=1 才出現，用來測 optional 步驟的兩條分支 -->
+  <div id="promo-popup" hidden>
+    <p>限時優惠！</p>
+    <button id="popup-close">關閉</button>
+  </div>
+
+  <button id="add-cart">加入購物車</button>
+  <div id="cart-added" hidden>已加入購物車</div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const code = params.get("code") || "unknown";
+
+    if (params.get("popup") === "1") {
+      document.getElementById("promo-popup").hidden = false;
+      document.getElementById("popup-close").addEventListener("click", () => {
+        document.getElementById("promo-popup").remove();
+      });
+    }
+
+    document.getElementById("add-cart").addEventListener("click", () => {
+      localStorage.setItem("cart", code);
+      document.getElementById("cart-added").hidden = false;
+    });
+  </script>
+</body>
+</html>

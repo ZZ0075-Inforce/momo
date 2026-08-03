@@ -40,6 +40,22 @@ CREATE TABLE IF NOT EXISTS events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_code_time ON events(code, created_at DESC);
+
+-- Phase 2：下單流程的嘗試紀錄。
+-- 持久化的理由是 max_attempts 必須跨重啟生效 —— 程式重開一次就重新計數的話，
+-- 「同一個商品只搶一次」這個閘門形同虛設。
+CREATE TABLE IF NOT EXISTS attempts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    code       TEXT NOT NULL,
+    outcome    TEXT NOT NULL,
+    reached    TEXT,
+    detail     TEXT,
+    dry_run    INTEGER NOT NULL,
+    total_ms   REAL,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_attempts_code ON attempts(code, created_at DESC);
 """
 
 
@@ -155,4 +171,42 @@ class Store:
         with self._lock:
             return self._conn.execute(
                 "SELECT * FROM events ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+
+    # --- attempts（Phase 2）--------------------------------------------
+
+    def record_attempt(
+        self,
+        code: str,
+        outcome: str,
+        *,
+        reached: str | None = None,
+        detail: str | None = None,
+        dry_run: bool = True,
+        total_ms: float | None = None,
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO attempts
+                       (code, outcome, reached, detail, dry_run, total_ms, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (code, outcome, reached, detail, int(dry_run), total_ms, _now()),
+            )
+            self._conn.commit()
+
+    def count_attempts(self, code: str, *, include_dry_run: bool = False) -> int:
+        """算這個商品試過幾次。
+
+        預設不計演練 —— 演練不會真的下單，不該吃掉 max_attempts 的額度。
+        """
+        sql = "SELECT COUNT(*) AS n FROM attempts WHERE code = ?"
+        if not include_dry_run:
+            sql += " AND dry_run = 0"
+        with self._lock:
+            return self._conn.execute(sql, (code,)).fetchone()["n"]
+
+    def recent_attempts(self, limit: int = 20) -> list[sqlite3.Row]:
+        with self._lock:
+            return self._conn.execute(
+                "SELECT * FROM attempts ORDER BY created_at DESC LIMIT ?", (limit,)
             ).fetchall()

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8">
+  <title>假商店 - 購物車</title>
+</head>
+<body>
+  <h1>購物車</h1>
+  <div id="empty-cart">購物車是空的</div>
+  <div id="cart-item" hidden>商品 <span id="cart-code"></span></div>
+  <button id="checkout" hidden>前往結帳</button>
+
+  <script>
+    const code = localStorage.getItem("cart");
+    if (code) {
+      document.getElementById("empty-cart").remove();
+      document.getElementById("cart-code").textContent = code;
+      document.getElementById("cart-item").hidden = false;
+      const button = document.getElementById("checkout");
+      button.hidden = false;
+      button.addEventListener("click", () => { location.href = "checkout.html"; });
+    }
+  </script>
+</body>
+</html>

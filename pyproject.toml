@@ -1,7 +1,7 @@
 [project]
 name = "momo-watch"
 version = "0.1.0"
-description = "momo 購物網商品庫存 / 價格監控與通知（Phase 1）"
+description = "momo 購物網商品庫存監控與半自動下單"
 requires-python = ">=3.11"
 dependencies = [
     "httpx>=0.27",
@@ -9,10 +9,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Phase 2 的下單流程才需要瀏覽器；只做監控的話不用裝。
+buy = [
+    "playwright>=1.44",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
     "ruff>=0.5",
+    "playwright>=1.44",
 ]
 
 [project.scripts]

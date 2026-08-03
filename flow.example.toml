@@ -1,0 +1,116 @@
+# 下單流程設定。複製成 flow.toml 後填入真正的 selector：
+#     cp flow.example.toml flow.toml
+#
+# ⚠️ 檔案裡的 selector 全是 TODO 佔位符，**必須由你自己填**。
+#
+# 原因：momo 的購物車 / 結帳頁沒有公開文件，DOM 也會改版，任何寫死的 selector
+# 都只是猜測。只要還有 TODO，PurchaseHandler 就會拒絕執行（見 check_guards）。
+#
+# 怎麼抓 selector：
+#   1. 用你平常的瀏覽器登入 momo，走一次完整的購買流程
+#   2. 在每個要點的按鈕上按右鍵 →「檢查」
+#   3. 在 Elements 面板對該節點按右鍵 → Copy → Copy selector
+#   4. 優先用 id（#addCartBtn）；用不到 id 時改用穩定的屬性
+#      （[data-action="addCart"]）。class 名稱最容易在改版時失效。
+#   5. 填完跑 `momo-watch buy <商品編號> --dry-run` 驗證，演練會檢查每個
+#      selector 找不找得到，但不會真的點下去。
+
+
+[guards]
+# 超過這個價格就不下單。解析壞掉導致價格讀錯時，這是最後一道防線。
+# 讀不到價格時一律擋下（fail-closed），不會放行。
+max_price = 15000
+
+# 流程停在付款頁，永不自動送出付款。
+# 台灣信用卡線上刷卡常需 3D 驗證簡訊 OTP，本來就自動化不了。
+stop_before_payment = true
+
+# 演練模式：mutating = true 的步驟只驗證 selector 存在，不真的點。
+# 確認流程跑得通之前，別把這個關掉。
+dry_run = true
+
+# 同一個商品最多嘗試幾次。補貨事件可能連續觸發，這個閘門避免重複下單。
+# 次數存在資料庫，程式重開不會重新計數。
+max_attempts = 1
+
+
+# ---------------------------------------------------------------------------
+# 步驟。由上而下依序執行，任一步失敗就停（optional = true 的除外）。
+#
+# action 可用：
+#   goto        前往網址（url）
+#   click       點擊（selector）
+#   fill        填入文字（selector + value）
+#   wait_for    等待元素出現（selector）
+#   expect      斷言元素存在，不存在就讓流程失敗（selector）
+#   expect_not  斷言元素不存在（selector）
+#   screenshot  截圖（path）
+#
+# 每個步驟可加：
+#   timeout_ms  逾時毫秒數，預設 5000
+#   mutating    會改變伺服器狀態（加入購物車、送出結帳），演練時跳過
+#   optional    找不到就跳過而非失敗（例如偶爾才跳的優惠彈窗）
+#
+# {code} 會被換成商品編號。
+# ---------------------------------------------------------------------------
+
+[[steps]]
+name = "開啟商品頁"
+action = "goto"
+url = "https://m.momoshop.com.tw/goods.momo?i_code={code}"
+timeout_ms = 15000
+
+[[steps]]
+name = "關閉可能的彈窗"
+action = "click"
+selector = "TODO_彈窗關閉鈕"
+optional = true          # 沒跳彈窗時直接跳過
+timeout_ms = 1500
+
+[[steps]]
+name = "確認有加入購物車按鈕"
+action = "expect"
+selector = "TODO_加入購物車按鈕"
+
+[[steps]]
+name = "加入購物車"
+action = "click"
+selector = "TODO_加入購物車按鈕"
+mutating = true
+
+[[steps]]
+name = "等待加入成功"
+action = "wait_for"
+selector = "TODO_加入成功的提示或購物車數量"
+
+[[steps]]
+name = "前往購物車"
+action = "goto"
+url = "TODO_購物車網址"
+timeout_ms = 15000
+
+[[steps]]
+name = "確認商品在購物車裡"
+action = "expect"
+selector = "TODO_購物車內的商品列"
+
+[[steps]]
+name = "前往結帳"
+action = "click"
+selector = "TODO_結帳按鈕"
+mutating = true
+timeout_ms = 15000
+
+[[steps]]
+name = "確認已到付款頁"
+action = "expect"
+selector = "TODO_付款頁面的特徵元素"
+timeout_ms = 15000
+
+# 最後一步刻意留白：不要在這裡加送出付款的 click。
+# 走到這裡就該發通知叫人來按，這是 stop_before_payment 的意思。
+
+[[steps]]
+name = "存證截圖"
+action = "screenshot"
+path = "screenshots/checkout-{code}.png"

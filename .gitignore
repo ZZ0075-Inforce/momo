@@ -9,7 +9,17 @@ build/
 .env
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 *.sqlite3
+
+# 登入 cookie —— 等同帳號憑證，絕對不要提交
+storage_state.json
+
+# 你填了真實 selector 的流程設定（flow.example.toml 才是進版控的範本）
+flow.toml
+
+screenshots/
 
 .pytest_cache/
 .ruff_cache/
