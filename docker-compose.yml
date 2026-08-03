@@ -1,0 +1,15 @@
+services:
+  momo-watch:
+    build: .
+    container_name: momo-watch
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MOMO_DB_PATH: /data/momo_watch.db
+    volumes:
+      - momo-data:/data
+    # 加商品：docker compose run --rm momo-watch add <網址>
+    # 看清單：docker compose run --rm momo-watch list
+
+volumes:
+  momo-data:

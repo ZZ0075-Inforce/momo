@@ -1,0 +1,37 @@
+[project]
+name = "momo-watch"
+version = "0.1.0"
+description = "momo 購物網商品庫存 / 價格監控與通知（Phase 1）"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "selectolax>=0.3.21",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+]
+
+[project.scripts]
+momo-watch = "momo_watch.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/momo_watch"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
